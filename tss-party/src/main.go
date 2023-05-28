@@ -21,7 +21,6 @@ import (
 	"github.com/bnb-chain/tss-lib/tss"
 
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -30,50 +29,57 @@ const (
 )
 
 const (
-	testFixtureDirFormat    = "%s/tss_data"
-	testFixtureFileFormat   = "keygen_data_%d.json"
-	testFixtureFileWildcard = "keygen_data_*.json"
+	fixtureDirFormat    = "%s/tss_data/%d-of-%d"
+	fixtureFileFormat   = "keygen_data_%d.json"
+	fixtureFileWildcard = "keygen_data_*.json"
 )
 
-func clearFixtureDir() {
+func clearFixtureDir(threshold, partySize int) error {
 	_, callerFileName, _, _ := runtime.Caller(0)
 	dirApp := filepath.Dir(callerFileName)
-	dirOut := fmt.Sprintf(testFixtureDirFormat, dirApp)
-	filePattern := fmt.Sprintf("%s/%s", dirOut, testFixtureFileWildcard)
+	dirOut := fmt.Sprintf(fixtureDirFormat, dirApp, threshold, partySize)
+	filePattern := fmt.Sprintf("%s/%s", dirOut, fixtureFileWildcard)
 
 	_, err := os.Stat(dirOut)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return
+			return nil;
 		}
-
-		fmt.Println("Error checking directory: ", err)
-		os.Exit(1)
+		return errors.Wrapf(err, "Error checking directory: %s", dirOut);
 	}
 
 	// Find files matching the pattern
 	filePaths, err := filepath.Glob(filePattern)
 	if err != nil {
-		fmt.Println("Error finding files:", err)
-		os.Exit(1)
+		return errors.Wrapf(err, "Error finding files: %s", filePattern);
 	}
 
 	// Delete the files
 	for _, filePath := range filePaths {
 		err := os.Remove(filePath)
 		if err != nil {
-			fmt.Println("Error deleting file:", err)
-			os.Exit(1)
-		} else {
-			fmt.Println("File deleted:", filePath)
-		}
+			return errors.Wrapf(err, "Error deleting file: %s", filePath);
+		} 
+		
+		fmt.Println("File deleted:", filePath)
 	}
+
+	return nil;
 }
 
-func createFixtureDir() string {
+func hasFixtureDir(threshold, partySize int) bool {
 	_, callerFileName, _, _ := runtime.Caller(0)
 	dirApp := filepath.Dir(callerFileName)
-	dirOut := fmt.Sprintf(testFixtureDirFormat, dirApp)
+	dirOut := fmt.Sprintf(fixtureDirFormat, dirApp, threshold, partySize)
+
+	di, err := os.Stat(dirOut)
+	return err == nil && di.IsDir()
+}
+
+func createFixtureDir(threshold, partySize int) error {
+	_, callerFileName, _, _ := runtime.Caller(0)
+	dirApp := filepath.Dir(callerFileName)
+	dirOut := fmt.Sprintf(fixtureDirFormat, dirApp, threshold, partySize)
 
 	_, err := os.Stat(dirOut)
 	if err != nil {
@@ -83,32 +89,31 @@ func createFixtureDir() string {
 
 			err = os.MkdirAll(dirOut, os.ModePerm)
 			if err != nil {
-				fmt.Println("Error creating directory: ", err)
-				os.Exit(1)
+				return errors.Wrapf(err, "Error creating directory: %s", dirOut)
 			}
 			fmt.Println("Directory created: ", dirOut)
 
 		} else {
-			fmt.Println("Error checking directory: ", err)
-			os.Exit(1)
+			return errors.Wrapf(err, "Error creating directory: %s", dirOut)
 		}
 	}
 
-	return dirOut
+	return nil
 }
 
 // Detect the caller's path and derive the party's fixture filename.
-func makeTestFixtureFilePath(partyIndex int) string {
-	dirOut := createFixtureDir()
-	fileOut := fmt.Sprintf("%s/"+testFixtureFileFormat, dirOut, partyIndex)
-
+func makeFixtureFilePath(threshold, partySize, partyIndex int) string {
+	_, callerFileName, _, _ := runtime.Caller(0)
+	dirApp := filepath.Dir(callerFileName)
+	dirOut := fmt.Sprintf(fixtureDirFormat, dirApp, threshold, partySize)
+	fileOut := fmt.Sprintf("%s/"+fixtureFileFormat, dirOut, partyIndex)
 	fmt.Printf("File Path: %s\n", fileOut)
 	return fileOut
 }
 
-func tryWriteTestFixtureFile(index int, data keygen.LocalPartySaveData) bool {
+func writeFixtureFile(threshold, partySize, partyIndex int, data keygen.LocalPartySaveData) error {
 
-	fixtureFileName := makeTestFixtureFilePath(index)
+	fixtureFileName := makeFixtureFilePath(threshold, partySize, partyIndex)
 
 	// If fixture file does not exist, create it
 	fi, err := os.Stat(fixtureFileName)
@@ -118,53 +123,52 @@ func tryWriteTestFixtureFile(index int, data keygen.LocalPartySaveData) bool {
 
 		fd, err := os.OpenFile(fixtureFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
-			fmt.Errorf("Unable to open fixture file %s for writing", fixtureFileName)
-			return false
+			return errors.Wrapf(err, "Unable to open fixture file %s for writing", fixtureFileName)
 		}
 
 		bz, err := json.Marshal(&data)
 		if err != nil {
-			fmt.Errorf("Unable to marshal save data for fixture file %s", fixtureFileName)
-			return false
+			return errors.Wrapf(err, "Unable to marshal save data for fixture file %s", fixtureFileName)
 		}
 
 		_, err = fd.Write(bz)
 		if err != nil {
-			fmt.Errorf("Unable to write to fixture file %s", fixtureFileName)
-			return false
+			return errors.Wrapf(err, "Unable to write to fixture file %s", fixtureFileName)
 		}
 
-		fmt.Printf("Saved a test fixture file for party %d: %s\n", index, fixtureFileName)
+		fmt.Printf("Saved a test fixture file for party %d: %s\n", partyIndex, fixtureFileName)
 	} else {
-		fmt.Printf("Fixture file already exists for party %d; not re-creating: %s\n", index, fixtureFileName)
+		fmt.Printf("Fixture file already exists for party %d; not re-creating: %s\n", partyIndex, fixtureFileName)
 	}
 
-	return true
+	return nil;
 }
 
-func LoadKeygenTestFixtures(qtyParticipants int, optionalStart ...int) ([]keygen.LocalPartySaveData, tss.SortedPartyIDs, error) {
+func loadFixturesAll(threshold, partySize int, optionalStart ...int) ([]keygen.LocalPartySaveData, tss.SortedPartyIDs, error) {
 
-	keys := make([]keygen.LocalPartySaveData, 0, qtyParticipants)
+	//Function requires the fixture dir to be already created
+	if !hasFixtureDir(threshold, partySize) {
+		return  nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
+	}
+
+	keys := make([]keygen.LocalPartySaveData, 0, partySize)
 	start := 0
 
 	if len(optionalStart) > 0 {
 		start = optionalStart[0]
 	}
 
-	for i := start; i < qtyParticipants; i++ {
-		fixtureFilePath := makeTestFixtureFilePath(i)
+	for i := start; i < partySize; i++ {
+		fixtureFilePath := makeFixtureFilePath(threshold, partySize, i)
+
 		bz, err := ioutil.ReadFile(fixtureFilePath)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err,
-				"could not open the test fixture for party %d in the expected location: %s. run keygen tests first.",
-				i, fixtureFilePath)
+			return nil, nil, errors.Wrapf(err, "Could not open fixture file for party %d located at: %s.", i, fixtureFilePath)
 		}
 
 		var key keygen.LocalPartySaveData
 		if err = json.Unmarshal(bz, &key); err != nil {
-			return nil, nil, errors.Wrapf(err,
-				"could not unmarshal fixture data for party %d located at: %s",
-				i, fixtureFilePath)
+			return nil, nil, errors.Wrapf(err, "Could not unmarshal fixture data for party %d located at: %s", i, fixtureFilePath)
 		}
 
 		for _, kbxj := range key.BigXj {
@@ -185,13 +189,19 @@ func LoadKeygenTestFixtures(qtyParticipants int, optionalStart ...int) ([]keygen
 	return keys, sortedPIDs, nil
 }
 
-// Randomly load qty of fixtures out of fixtureCount
-func LoadKeygenTestFixturesRandomSet(qty, fixtureCount int) ([]keygen.LocalPartySaveData, tss.SortedPartyIDs, error) {
+// Randomly load (threshold+1) fixtures out of partySize
+func loadFixturesSet(threshold, partySize int) ([]keygen.LocalPartySaveData, tss.SortedPartyIDs, error) {
 
+	//Function requires the fixture dir to be already created
+	if !hasFixtureDir(threshold, partySize) {
+		return  nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
+	}
+
+	qty	 := threshold + 1
 	keys := make([]keygen.LocalPartySaveData, 0, qty)
 	plucked := make(map[int]interface{}, qty)
 
-	for i := 0; len(plucked) < qty; i = (i + 1) % fixtureCount {
+	for i := 0; len(plucked) < qty; i = (i + 1) % partySize {
 		_, have := plucked[i]
 		if pluck := rand.Float32() < 0.5; !have && pluck {
 			plucked[i] = new(struct{})
@@ -199,20 +209,16 @@ func LoadKeygenTestFixturesRandomSet(qty, fixtureCount int) ([]keygen.LocalParty
 	}
 
 	for i := range plucked {
-		fixtureFilePath := makeTestFixtureFilePath(i)
-		bz, err := ioutil.ReadFile(fixtureFilePath)
+		fixtureFilePath := makeFixtureFilePath(threshold, partySize, i)
 
+		bz, err := ioutil.ReadFile(fixtureFilePath)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err,
-				"could not open the test fixture for party %d in the expected location: %s. run keygen tests first.",
-				i, fixtureFilePath)
+			return nil, nil, errors.Wrapf(err, "Could not open fixture file for party %d located at: %s.", i, fixtureFilePath)
 		}
 
 		var key keygen.LocalPartySaveData
 		if err = json.Unmarshal(bz, &key); err != nil {
-			return nil, nil, errors.Wrapf(err,
-				"could not unmarshal fixture data for party %d located at: %s",
-				i, fixtureFilePath)
+			return nil, nil, errors.Wrapf(err, "Could not unmarshal fixture data for party %d located at: %s", i, fixtureFilePath)
 		}
 
 		for _, kbxj := range key.BigXj {
@@ -239,14 +245,18 @@ func LoadKeygenTestFixturesRandomSet(qty, fixtureCount int) ([]keygen.LocalParty
 	return keys, sortedPIDs, nil
 }
 
-func testDistibutedKeyGeneration(threshold, partySize int) {
-	fixtures, pIDs, err := LoadKeygenTestFixtures(partySize)
+func distibutedKeyGeneration(threshold, partySize int) error {
+
+	//Make sure the Fixtur dir exists
+	err := createFixtureDir(threshold, partySize)
 	if err != nil {
-		common.Logger.Info("No fixtures found, generating safe primes. This may take a while...")
-		pIDs = tss.GenerateTestPartyIDs(partySize)
+		return err
 	}
 
-	p2pCtx := tss.NewPeerContext(pIDs)
+	fmt.Println("Generating safe primes. This may take a while...")
+	pIDs := tss.GenerateTestPartyIDs(partySize)
+
+	p2pCtx  := tss.NewPeerContext(pIDs)
 	parties := make([]*keygen.LocalParty, 0, len(pIDs))
 
 	errCh := make(chan *tss.Error, len(pIDs))
@@ -258,14 +268,8 @@ func testDistibutedKeyGeneration(threshold, partySize int) {
 
 	// init the parties
 	for i := 0; i < len(pIDs); i++ {
-		var P *keygen.LocalParty
-
 		params := tss.NewParameters(tss.S256(), p2pCtx, pIDs[i], len(pIDs), threshold)
-		if i < len(fixtures) {
-			P = keygen.NewLocalParty(params, outCh, endCh, fixtures[i].LocalPreParams).(*keygen.LocalParty)
-		} else {
-			P = keygen.NewLocalParty(params, outCh, endCh).(*keygen.LocalParty)
-		}
+		P := keygen.NewLocalParty(params, outCh, endCh).(*keygen.LocalParty)
 
 		parties = append(parties, P)
 		go func(P *keygen.LocalParty) {
@@ -282,8 +286,7 @@ keygen:
 		fmt.Printf("ACTIVE GOROUTINES: %d\n", runtime.NumGoroutine())
 		select {
 		case err := <-errCh:
-			common.Logger.Errorf("Error: %s", err)
-			break keygen
+			return err
 
 		case msg := <-outCh:
 			dest := msg.GetTo()
@@ -296,8 +299,7 @@ keygen:
 				}
 			} else { // point-to-point!
 				if dest[0].Index == msg.GetFrom().Index {
-					fmt.Errorf("party %d tried to send a message to itself (%d)", dest[0].Index, msg.GetFrom().Index)
-					return
+					return fmt.Errorf("party %d tried to send a message to itself (%d)", dest[0].Index, msg.GetFrom().Index)
 				}
 				go updater(parties[dest[0].Index], msg, errCh)
 			}
@@ -306,7 +308,10 @@ keygen:
 			// SAVE a test fixture file for this P (if it doesn't already exist)
 			// .. here comes a workaround to recover this party's index (it was removed from save data)
 			index, _ := save.OriginalIndex()
-			tryWriteTestFixtureFile(index, save)
+			err := writeFixtureFile(threshold, partySize, index, save)
+			if err != nil {
+				return err
+			}
 
 			atomic.AddInt32(&ended, 1)
 			if atomic.LoadInt32(&ended) == int32(len(pIDs)) {
@@ -317,14 +322,16 @@ keygen:
 			}
 		}
 	}
+
+	return nil;
 }
 
-func testDistibutedSigning(threshold, partySize int) {
+func distibutedSigning(threshold, partySize int) error {
 	messageToSign := big.NewInt(42)
 
-	keys, signPIDs, err := LoadKeygenTestFixturesRandomSet(threshold+1, partySize)
+	keys, signPIDs, err := loadFixturesSet(threshold, partySize)
 	if err != nil {
-		common.Logger.Error("should load keygen fixtures")
+		return errors.Wrapf(err, "Failed to load keys.")
 	}
 
 	// PHASE: signing
@@ -358,9 +365,7 @@ signing:
 		fmt.Printf("ACTIVE GOROUTINES: %d\n", runtime.NumGoroutine())
 		select {
 		case err := <-errCh:
-			common.Logger.Errorf("Error: %s", err)
-			assert.FailNow(nil, err.Error())
-			break signing
+			return err
 
 		case msg := <-outCh:
 			dest := msg.GetTo()
@@ -373,7 +378,7 @@ signing:
 				}
 			} else {
 				if dest[0].Index == msg.GetFrom().Index {
-					common.Logger.Fatalf("party %d tried to send a message to itself (%d)", dest[0].Index, msg.GetFrom().Index)
+					return fmt.Errorf("party %d tried to send a message to itself (%d)", dest[0].Index, msg.GetFrom().Index)
 				}
 				go updater(parties[dest[0].Index], msg, errCh)
 			}
@@ -381,7 +386,7 @@ signing:
 		case signReady := <-endCh:
 			atomic.AddInt32(&signEnded, 1)
 			if atomic.LoadInt32(&signEnded) == int32(len(signPIDs)) {
-				common.Logger.Debug("Done. Received signature data from %d participants", signEnded)
+				fmt.Printf("Done. Received signature data from %d participants\n", signEnded)
 
 				// BEGIN ECDSA verify
 				pkX, pkY := keys[0].ECDSAPub.X(), keys[0].ECDSAPub.Y()
@@ -394,13 +399,19 @@ signing:
 					new(big.Int).SetBytes(signReady.R),
 					new(big.Int).SetBytes(signReady.S))
 
-				assert.True(nil, ok, "ecdsa verify must pass")
+				if !ok {
+					return fmt.Errorf("ECDSA verification FAILED!")
+				}
+
 				fmt.Printf("ECDSA signing test done.\n")
 				// END ECDSA verify
+
 				break signing
 			}
 		}
 	}
+
+	return nil;
 }
 
 func usage() {
@@ -411,7 +422,7 @@ func usage() {
 	fmt.Println("  sign  - Sign random hash")
 }
 
-func flagsNormalize(threshold, partySize int) (int, int) {
+func flagsValidation(threshold, partySize int) (int, int) {
 
 	if threshold < 0 {
 		fmt.Printf("Invalid flags, threshold (%d) must be greater or equal to zero.\n", threshold)
@@ -448,20 +459,38 @@ func main() {
 		setupCmd.Parse(os.Args[2:])
 		fmt.Println("Setup...")
 
-		*setupThreshold, *setupParty = flagsNormalize(*setupThreshold, *setupParty)
+		flagsValidation(*setupThreshold, *setupParty)
 		fmt.Println("Threshold:  ", *setupThreshold)
 		fmt.Println("Party Size: ", *setupParty)
-		clearFixtureDir()
-		testDistibutedKeyGeneration(*setupThreshold, *setupParty)
+
+		err := clearFixtureDir(*setupThreshold, *setupParty)
+		if err != nil {
+			fmt.Println("Failed on clearing fixture dir.")
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		err = distibutedKeyGeneration(*setupThreshold, *setupParty)
+		if err != nil {
+			fmt.Println("Setup failed.")
+			fmt.Println(err)
+			os.Exit(1)
+		}
 
 	case "sign":
 		signCmd.Parse(os.Args[2:])
 		fmt.Println("Signing...")
 
-		*signThreshold, *signParty = flagsNormalize(*signThreshold, *signParty)
+		flagsValidation(*signThreshold, *signParty)
 		fmt.Println("Threshold:  ", *signThreshold)
 		fmt.Println("Party Size: ", *signParty)
-		testDistibutedSigning(*signThreshold, *signParty)
+
+		err := distibutedSigning(*signThreshold, *signParty)
+		if err != nil {
+			fmt.Println("Signing failed.")
+			fmt.Println(err)
+			os.Exit(1)
+		}
 
 	case "help":
 		usage()
