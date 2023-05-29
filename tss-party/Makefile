@@ -7,10 +7,10 @@ clean:
 build: 
 	rm ./bin -rfv
 	mkdir bin
-	go build -o ./bin/main ./src/.
+	go build -o ./bin/tssparty ./src/.
 
 runsetup:
-	./bin/main setup
+	./bin/tssparty setup
 
 runsign:
-	./bin/main sign
+	./bin/tssparty sign

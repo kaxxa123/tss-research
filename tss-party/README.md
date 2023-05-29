@@ -23,7 +23,7 @@ The application provides a command line tool for performing a TSS setup and sign
 
 Check the application usage:
 ```BASH
-./bin/main help
+./bin/tssparty help
 ```
 
 <BR />
