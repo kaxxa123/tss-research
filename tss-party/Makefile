@@ -7,7 +7,7 @@ clean:
 build: 
 	rm ./bin -rfv
 	mkdir bin
-	go build -o ./bin ./src/main.go
+	go build -o ./bin/main ./src/.
 
 runsetup:
 	./bin/main setup

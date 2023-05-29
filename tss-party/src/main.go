@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 const (
 	DefaultPartySize = 6
 	DefaultThreshold = 3
+	DefaultMessage   = "Hello World!"
 )
 
 const (
@@ -43,28 +45,28 @@ func clearFixtureDir(threshold, partySize int) error {
 	_, err := os.Stat(dirOut)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil;
+			return nil
 		}
-		return errors.Wrapf(err, "Error checking directory: %s", dirOut);
+		return errors.Wrapf(err, "Error checking directory: %s", dirOut)
 	}
 
 	// Find files matching the pattern
 	filePaths, err := filepath.Glob(filePattern)
 	if err != nil {
-		return errors.Wrapf(err, "Error finding files: %s", filePattern);
+		return errors.Wrapf(err, "Error finding files: %s", filePattern)
 	}
 
 	// Delete the files
 	for _, filePath := range filePaths {
 		err := os.Remove(filePath)
 		if err != nil {
-			return errors.Wrapf(err, "Error deleting file: %s", filePath);
-		} 
-		
+			return errors.Wrapf(err, "Error deleting file: %s", filePath)
+		}
+
 		fmt.Println("File deleted:", filePath)
 	}
 
-	return nil;
+	return nil
 }
 
 func hasFixtureDir(threshold, partySize int) bool {
@@ -141,14 +143,14 @@ func writeFixtureFile(threshold, partySize, partyIndex int, data keygen.LocalPar
 		fmt.Printf("Fixture file already exists for party %d; not re-creating: %s\n", partyIndex, fixtureFileName)
 	}
 
-	return nil;
+	return nil
 }
 
 func loadFixturesAll(threshold, partySize int, optionalStart ...int) ([]keygen.LocalPartySaveData, tss.SortedPartyIDs, error) {
 
 	//Function requires the fixture dir to be already created
 	if !hasFixtureDir(threshold, partySize) {
-		return  nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
+		return nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
 	}
 
 	keys := make([]keygen.LocalPartySaveData, 0, partySize)
@@ -177,6 +179,13 @@ func loadFixturesAll(threshold, partySize int, optionalStart ...int) ([]keygen.L
 
 		key.ECDSAPub.SetCurve(tss.S256())
 		keys = append(keys, key)
+
+		uncompPK := uncompressedPK(key.ECDSAPub.X(), key.ECDSAPub.Y())
+		addr := pk2addr(uncompPK)
+
+		fmt.Printf("Public Key for party #%d: (0x%s, 0x%s)\n", i, key.ECDSAPub.X().Text(16), key.ECDSAPub.Y().Text(16))
+		fmt.Printf("Uncompressed PubKey: 0x%s\n", uncompPK)
+		fmt.Printf("Ethereum Address: %s\n", addr)
 	}
 
 	partyIDs := make(tss.UnSortedPartyIDs, len(keys))
@@ -194,10 +203,10 @@ func loadFixturesSet(threshold, partySize int) ([]keygen.LocalPartySaveData, tss
 
 	//Function requires the fixture dir to be already created
 	if !hasFixtureDir(threshold, partySize) {
-		return  nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
+		return nil, nil, fmt.Errorf("Fixture dir not found! Run Setup.")
 	}
 
-	qty	 := threshold + 1
+	qty := threshold + 1
 	keys := make([]keygen.LocalPartySaveData, 0, qty)
 	plucked := make(map[int]interface{}, qty)
 
@@ -227,6 +236,13 @@ func loadFixturesSet(threshold, partySize int) ([]keygen.LocalPartySaveData, tss
 
 		key.ECDSAPub.SetCurve(tss.S256())
 		keys = append(keys, key)
+
+		uncompPK := uncompressedPK(key.ECDSAPub.X(), key.ECDSAPub.Y())
+		addr := pk2addr(uncompPK)
+
+		fmt.Printf("Public Key for party #%d: (0x%s, 0x%s)\n", i, key.ECDSAPub.X().Text(16), key.ECDSAPub.Y().Text(16))
+		fmt.Printf("Uncompressed PubKey: 0x%s\n", uncompPK)
+		fmt.Printf("Ethereum Address: %s\n", addr)
 	}
 
 	partyIDs := make(tss.UnSortedPartyIDs, len(keys))
@@ -256,7 +272,7 @@ func distibutedKeyGeneration(threshold, partySize int) error {
 	fmt.Println("Generating safe primes. This may take a while...")
 	pIDs := tss.GenerateTestPartyIDs(partySize)
 
-	p2pCtx  := tss.NewPeerContext(pIDs)
+	p2pCtx := tss.NewPeerContext(pIDs)
 	parties := make([]*keygen.LocalParty, 0, len(pIDs))
 
 	errCh := make(chan *tss.Error, len(pIDs))
@@ -323,11 +339,18 @@ keygen:
 		}
 	}
 
-	return nil;
+	return nil
 }
 
-func distibutedSigning(threshold, partySize int) error {
-	messageToSign := big.NewInt(42)
+func distibutedSigning(threshold, partySize int, msg string) error {
+
+	if len(msg) < 1 {
+		return fmt.Errorf("Empty Message not supported")
+	}
+
+	hash := sha256.Sum256([]byte(msg))
+	messageToSign := new(big.Int)
+	messageToSign.SetBytes(hash[:])
 
 	keys, signPIDs, err := loadFixturesSet(threshold, partySize)
 	if err != nil {
@@ -395,15 +418,23 @@ signing:
 					X:     pkX,
 					Y:     pkY,
 				}
-				ok := ecdsa.Verify(&pk, messageToSign.Bytes(),
-					new(big.Int).SetBytes(signReady.R),
-					new(big.Int).SetBytes(signReady.S))
+				// v = 27 + recovery_id + 2 * chain_id,
+				signV := 27 + int(signReady.SignatureRecovery[0])
+				signR := new(big.Int).SetBytes(signReady.R)
+				signS := new(big.Int).SetBytes(signReady.S)
+
+				ok := ecdsa.Verify(&pk, messageToSign.Bytes(), signR, signS)
 
 				if !ok {
 					return fmt.Errorf("ECDSA verification FAILED!")
 				}
 
-				fmt.Printf("ECDSA signing test done.\n")
+				fmt.Printf("ECDSA signature Verified\n")
+				fmt.Printf("Message:     %s\n", msg)
+				fmt.Printf("Msg Hash:    %s\n", messageToSign.Text(16))
+				fmt.Printf("Signature V: %d\n", signV)
+				fmt.Printf("Signature R: %s\n", signR.Text(16))
+				fmt.Printf("Signature S: %s\n", signS.Text(16))
 				// END ECDSA verify
 
 				break signing
@@ -411,7 +442,7 @@ signing:
 		}
 	}
 
-	return nil;
+	return nil
 }
 
 func usage() {
@@ -446,6 +477,7 @@ func main() {
 	signCmd := flag.NewFlagSet("sign", flag.ExitOnError)
 	signThreshold := signCmd.Int("threshold", DefaultThreshold, "Signer threshold")
 	signParty := signCmd.Int("party", DefaultPartySize, "Number of Participants")
+	signMsg := signCmd.String("msg", DefaultMessage, "Message to be signed!")
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
@@ -485,7 +517,7 @@ func main() {
 		fmt.Println("Threshold:  ", *signThreshold)
 		fmt.Println("Party Size: ", *signParty)
 
-		err := distibutedSigning(*signThreshold, *signParty)
+		err := distibutedSigning(*signThreshold, *signParty, *signMsg)
 		if err != nil {
 			fmt.Println("Signing failed.")
 			fmt.Println(err)
