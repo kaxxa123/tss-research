@@ -44,10 +44,10 @@ function verifySignature(pk: string, signR: string, signS: string, msg: string):
         throw `Invalid uncompressed public key length. Required len: ${UNCOMP_PK_LEN}`
 
     if (signR.length < 64) 
-        signR = signR.padStart(64-signR.length, '0')
+        signR = signR.padStart(64,'0')
 
     if (signS.length < 64) 
-        signS = signS.padStart(64-signS.length, '0')
+        signS = signS.padStart(64,'0')
 
     const sign      = signR + signS;
     const sigBuffer = Buffer.from(sign, 'hex');
